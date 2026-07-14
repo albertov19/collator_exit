@@ -1,0 +1,14 @@
+# pnpm reads build-script approvals from here (pnpm v10+).
+# esbuild ships a platform-specific binary via its postinstall and MUST build,
+# or vite cannot run. The rest are optional native modules we don't need.
+allowBuilds:
+  bufferutil: false
+  esbuild: true
+  keccak: false
+  utf-8-validate: false
+
+# Don't run an implicit "pnpm install" check before every `pnpm run`, and don't
+# block on a TTY prompt when reconfiguring node_modules. Keeps `pnpm run dev`
+# working non-interactively.
+verifyDepsBeforeRun: false
+confirmModulesPurge: false
