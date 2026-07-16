@@ -7,6 +7,9 @@ import react from '@vitejs/plugin-react';
 // relative base is safe.
 export default defineConfig({
   base: './',
+  // Some @polkadot/* transitive deps reference `global`; map it to globalThis
+  // so the browser build doesn't hit "global is not defined" at runtime.
+  define: { global: 'globalThis' },
   plugins: [react()],
   server: {
     port: 5173,

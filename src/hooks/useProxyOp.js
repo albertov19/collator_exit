@@ -1,19 +1,18 @@
 import { useCallback, useState } from 'react';
-import { usePublicClient, useWriteContract, useAccount } from 'wagmi';
+import { usePublicClient, useSendTransaction, useAccount } from 'wagmi';
 import { waitForTransactionReceipt } from 'wagmi/actions';
 import { encodeFunctionData } from 'viem';
 import { config } from '../wagmi.js';
 import { PRECOMPILES, proxyAbi } from '../precompiles.js';
 
-// Recognize known on-chain revert reasons (from the proxy precompile) and map
-// them to actionable guidance. Returns a message string for a recognized
-// failure, or null when the error is not one we can explain (e.g. an opaque
-// node "internal error").
+// Recognize known on-chain revert reasons and map them to actionable guidance.
+// Returns a message string for a recognized failure, or null when the error is
+// not one we can explain (e.g. an opaque node "internal error").
 function knownRevertMessage(err) {
   const text =
     (err?.shortMessage || '') + ' ' + (err?.details || '') + ' ' + (err?.message || '') + ' ' + (err?.cause?.message || '');
   if (/Not proxy/i.test(text)) {
-    return 'Not proxy: your connected wallet is not registered as a proxy of the Real account. Add it as a proxy (type Any, or the type matching this action) first.';
+    return 'Not proxy: your connected wallet is not registered as a proxy of the Real account. Add it as a proxy (type Any, or the type matching this action) first, or turn off "Execute via proxy".';
   }
   if (/CallFiltered/i.test(text)) {
     return 'CallFiltered: your proxy exists but its type does not permit this call. Use a proxy of the matching type — Staking for the leave-candidates steps, AuthorMapping for removeKeys, or Any.';
@@ -28,19 +27,20 @@ function knownRevertMessage(err) {
 }
 
 /**
- * Generic hook to run one collator-offboarding operation through the proxy
- * precompile.
+ * Generic hook to run one collator-offboarding operation, either wrapped in
+ * proxy.proxy (useProxy = true) or sent directly from the connected wallet
+ * (useProxy = false).
  *
  * `prepare` is an async function ({ publicClient, real, delegate }) that returns
- * { callTo, callData, details } where:
- *   - callTo:  the target precompile the proxied call dispatches to
+ * { callTo, callData, details }:
+ *   - callTo:  the target precompile the call dispatches to
  *   - callData: ABI-encoded inner call (built after reading on-chain params)
  *   - details: array of { label, value } describing resolved on-chain params
  */
-export function useProxyOp(prepare) {
+export function useProxyOp(prepare, useProxy = true) {
   const publicClient = usePublicClient();
   const { address } = useAccount();
-  const { writeContractAsync } = useWriteContract();
+  const { sendTransactionAsync } = useSendTransaction();
 
   const [status, setStatus] = useState('idle'); // idle | preparing | simulating | signing | mining | success | error
   const [hash, setHash] = useState(null);
@@ -63,18 +63,24 @@ export function useProxyOp(prepare) {
         return;
       }
 
-      const args = [real, prepared.callTo, prepared.callData];
+      // Build the outer tx: wrapped in proxy.proxy, or sent directly to the
+      // target precompile from the connected wallet.
+      const { to, data } = useProxy
+        ? {
+            to: PRECOMPILES.proxy,
+            data: encodeFunctionData({
+              abi: proxyAbi,
+              functionName: 'proxy',
+              args: [real, prepared.callTo, prepared.callData],
+            }),
+          }
+        : { to: prepared.callTo, data: prepared.callData };
 
-      // Preflight the exact proxy.proxy call so we can surface the real revert
-      // reason (Not proxy / CallFiltered / Unannounced / EOA filter) instead of
-      // the wallet's opaque "gas estimation failed".
+      // Preflight so we can surface the real revert reason instead of the
+      // wallet's opaque "gas estimation failed".
       setStatus('simulating');
       try {
-        await publicClient.call({
-          account: address,
-          to: PRECOMPILES.proxy,
-          data: encodeFunctionData({ abi: proxyAbi, functionName: 'proxy', args }),
-        });
+        await publicClient.call({ account: address, to, data });
       } catch (simErr) {
         const known = knownRevertMessage(simErr);
         if (known) {
@@ -82,19 +88,12 @@ export function useProxyOp(prepare) {
           setError(new Error(known));
           return;
         }
-        // Unrecognized simulation error (e.g. a node internal error). Do not
-        // block — fall through and let the wallet do its own estimation/signing.
+        // Unrecognized simulation error — don't block; let the wallet estimate.
       }
 
       try {
-        // Wrap the inner call in proxy.proxy(real, callTo, callData).
         setStatus('signing');
-        const txHash = await writeContractAsync({
-          address: PRECOMPILES.proxy,
-          abi: proxyAbi,
-          functionName: 'proxy',
-          args,
-        });
+        const txHash = await sendTransactionAsync({ to, data });
         setHash(txHash);
 
         setStatus('mining');
@@ -111,7 +110,7 @@ export function useProxyOp(prepare) {
         setError(known ? new Error(known) : err);
       }
     },
-    [prepare, publicClient, address, writeContractAsync]
+    [prepare, publicClient, address, sendTransactionAsync, useProxy]
   );
 
   const reset = useCallback(() => {

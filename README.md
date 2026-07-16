@@ -1,26 +1,44 @@
 # Moonbeam / Moonriver Collator Offboarding
 
 A single-page app to offboard a collator on Moonbeam, Moonriver, or Moonbase Alpha
-using an **Ethereum wallet** (MetaMask / any injected wallet). Every action is
-dispatched on behalf of a **Real account** through the **proxy precompile**
-(`proxy.proxy(real, callTo, callData)`), so no Substrate/Polkadot.js tooling is
-needed.
+using an **Ethereum wallet** (MetaMask / any injected wallet). Each action calls
+the Moonbeam staking and author-mapping precompiles — either **directly** from the
+connected wallet, or wrapped in the **proxy precompile**
+(`proxy.proxy(real, callTo, callData)`) to act on behalf of a **Real account**.
 
 ## What it does
 
-You enter one input — the **Real account** (the collator you hold proxy rights
-for). Every other parameter is read on-chain automatically. The offboarding
-operations are each wrapped in a single `proxy.proxy` transaction:
+Toggle **“Execute via proxy”** next to the account field (default **off**):
 
-| # | Operation | Inner precompile call | On-chain params fetched |
-|---|-----------|-----------------------|-------------------------|
-| 1 | Schedule leave candidates | Staking `scheduleLeaveCandidates(candidateCount)` | `candidateCount()` |
-| 2 | Execute leave candidates | Staking `executeLeaveCandidates(real, delegationCount)` | `candidateDelegationCount(real)` |
-| 3 | Remove author mapping keys | AuthorMapping `removeKeys()` | — |
+- **Off (default)** — the connected wallet acts on itself; calls go straight to
+  the precompiles (no wrapping).
+- **On** — enter the **Real account** (the collator you hold proxy rights for);
+  every action is wrapped in `proxy.proxy` and dispatched on its behalf.
 
-Steps 1 → 2 are sequential and separated by the network's leave delay. The status
-panel shows the Real account's `isCandidate`, author-mapping keys, free balance,
-candidate/delegation counts, and Nimbus ID, refreshed on-chain.
+Every parameter other than the account is read on-chain automatically, and each
+step is gated on live on-chain state:
+
+| # | Operation | Precompile call | Gated on |
+|---|-----------|-----------------|----------|
+| 1 | Schedule leave candidates | Staking `scheduleLeaveCandidates(candidateCount)` | `isCandidate` — disabled if the account isn't a candidate |
+| 2 | Execute leave candidates | Staking `executeLeaveCandidates(account, delegationCount)` | live round status — disabled until the exit round is reached (see below) |
+| 3 | Remove author mapping keys | AuthorMapping `removeKeys()` | `nimbusIdOf` — disabled if the account has no author-mapping keys |
+
+The status panel shows the account's `isCandidate`, author-mapping keys, free
+balance, candidate/delegation counts, and Nimbus ID.
+
+### Live round-status gate on “execute leave”
+
+The EVM staking precompile exposes `round()` but **not** the round at which a
+scheduled exit becomes executable. So the app reads Substrate over WSS — a live
+subscription to `parachainStaking.candidateInfo(collator).status` (which is
+`Leaving(round)` once a leave is scheduled), `parachainStaking.round()`, and new
+block heads — via a lazily-loaded `@polkadot/api` (read-only, no signing). It
+computes the executable block (`roundFirst + (leavingRound − currentRound) ×
+roundLength`) and shows a **live countdown** (~6s block time), updating every
+block. “Execute leave” stays disabled until `currentRound ≥ leavingRound`, so you
+can't broadcast a transaction that would revert. If the subscription fails, the
+button is re-enabled and the on-chain call is allowed to arbitrate.
 
 ### Why there is no balance-transfer step
 
@@ -43,10 +61,11 @@ with the delegate paying only fees, use Substrate instead — Polkadot.js
 
 ## Prerequisites
 
-To run the offboarding steps, your connected wallet **must already be registered
-as a proxy** of the Real account. Proxy type `Any` covers everything; otherwise use
-`Staking` (leave-candidates steps) and `AuthorMapping` (removeKeys). Set this up in
-the **Proxy management** section (or via Polkadot.js).
+In **proxy mode**, your connected wallet must already be registered as a proxy of
+the Real account. Proxy type `Any` covers everything; otherwise use `Staking`
+(leave-candidates steps) and `AuthorMapping` (removeKeys). Register the proxy via
+Polkadot.js or the proxy precompile's `addProxy`. With proxy mode **off**, no proxy
+is needed — the connected wallet acts as the collator directly.
 
 ## Run
 
