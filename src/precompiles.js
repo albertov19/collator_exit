@@ -5,6 +5,9 @@ export const PRECOMPILES = {
   staking: '0x0000000000000000000000000000000000000800',
   authorMapping: '0x0000000000000000000000000000000000000807',
   erc20: '0x0000000000000000000000000000000000000802',
+  convictionVoting: '0x0000000000000000000000000000000000000812',
+  batch: '0x0000000000000000000000000000000000000808',
+  identity: '0x0000000000000000000000000000000000000818',
 };
 
 // Proxy type enum ordering used by the proxy precompile.
@@ -55,6 +58,26 @@ export const proxyAbi = [
       { name: 'delay', type: 'uint32' },
     ],
     outputs: [{ name: '', type: 'bool' }],
+  },
+  {
+    // Removes every proxy delegation registered by the caller (refunds the deposit).
+    type: 'function',
+    name: 'removeProxies',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
+  },
+];
+
+// --- Identity precompile (0x...0818) ---
+export const identityAbi = [
+  {
+    // Clears the caller's identity registration (refunds the deposit).
+    type: 'function',
+    name: 'clearIdentity',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
   },
 ];
 
@@ -122,6 +145,59 @@ export const authorMappingAbi = [
     stateMutability: 'view',
     inputs: [{ name: 'who', type: 'address' }],
     outputs: [{ name: '', type: 'bytes32' }],
+  },
+];
+
+// --- Conviction Voting precompile (0x...0812) ---
+// Only the calls needed to remove votes and unlock the freed balance.
+// `removeVoteForTrack` (not the bare `removeVote`) is used so removals also work
+// for *finished* referenda — the track/class is passed explicitly, which the
+// pallet needs once a poll is no longer ongoing.
+export const convictionVotingAbi = [
+  {
+    type: 'function',
+    name: 'removeVote',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'pollIndex', type: 'uint32' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'removeVoteForTrack',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'pollIndex', type: 'uint32' },
+      { name: 'trackId', type: 'uint16' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'unlock',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'trackId', type: 'uint16' },
+      { name: 'target', type: 'address' },
+    ],
+    outputs: [],
+  },
+];
+
+// --- Batch precompile (0x...0808) ---
+// batchAll reverts the whole transaction if any subcall reverts (all-or-nothing),
+// which is what we want for remove-then-unlock so partial state can't linger.
+export const batchAbi = [
+  {
+    type: 'function',
+    name: 'batchAll',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'to', type: 'address[]' },
+      { name: 'value', type: 'uint256[]' },
+      { name: 'callData', type: 'bytes[]' },
+      { name: 'gasLimit', type: 'uint64[]' },
+    ],
+    outputs: [],
   },
 ];
 

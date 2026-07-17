@@ -24,8 +24,39 @@ step is gated on live on-chain state:
 | 2 | Execute leave candidates | Staking `executeLeaveCandidates(account, delegationCount)` | live round status — disabled until the exit round is reached (see below) |
 | 3 | Remove author mapping keys | AuthorMapping `removeKeys()` | `nimbusIdOf` — disabled if the account has no author-mapping keys |
 
-The status panel shows the account's `isCandidate`, author-mapping keys, free
-balance, candidate/delegation counts, and Nimbus ID.
+The status panel shows the account's full **balance breakdown**
+(transferable / reserved / locked / total), an itemized view of what each
+**reserved deposit** is for (proxy, identity, subs, …), plus `isCandidate`,
+author-mapping keys, candidate/delegation counts, and Nimbus ID.
+
+### Balance breakdown & reserved deposits
+
+The EVM ERC-20 precompile (`balanceOf`) only exposes the *transferable* balance —
+it can't see **reserved** funds or governance **locks**. So the status panel reads
+`derive.balances.all` over Substrate (matching Polkadot.js / Subscan) and, for the
+reserved total, attributes each deposit to its source by reading
+`proxy.proxies` / `proxy.announcements` (proxy deposits) and
+`identity.identityOf` / `identity.subsOf` (identity deposits); any unattributed
+remainder is shown as “Other”.
+
+### Governance — remove votes & unlock, and account cleanup
+
+Three more actions act on the **connected wallet itself** and are always sent
+**directly** (the batch/proxy/identity precompiles aren't allowed proxy targets,
+and each call operates on the caller):
+
+| Operation | Call | Gated on |
+|-----------|------|----------|
+| Remove all votes & unlock | Batch `batchAll([ ConvictionVoting.removeVoteForTrack(pollIndex, trackId)…, ConvictionVoting.unlock(trackId, self)… ])` | live votes/locks — disabled if the wallet has none |
+| Remove all proxies | Proxy `removeProxies()` | `proxy.proxies` — disabled if no proxies are registered |
+| Clear identity | Identity `clearIdentity()` | `identity.identityOf` — disabled if no identity is set |
+
+The **remove votes & unlock** step enumerates every track the wallet has voted on
+(`convictionVoting.votingFor.entries` + `classLocksFor` over Substrate), then builds
+a single `batchAll`: one `removeVoteForTrack(pollIndex, trackId)` per vote followed
+by one `unlock(trackId, self)` per locked track. `removeVoteForTrack` (rather than
+the bare `removeVote`) is used so removals also work for *finished* referenda, and
+`batchAll` is all-or-nothing — if any subcall reverts the whole transaction does.
 
 ### Live round-status gate on “execute leave”
 
@@ -58,6 +89,9 @@ with the delegate paying only fees, use Substrate instead — Polkadot.js
 - Staking: `0x0000000000000000000000000000000000000800`
 - Author Mapping: `0x0000000000000000000000000000000000000807`
 - ERC-20 (native token, used only to read the Real account's balance): `0x0000000000000000000000000000000000000802`
+- Conviction Voting: `0x0000000000000000000000000000000000000812`
+- Batch: `0x0000000000000000000000000000000000000808`
+- Identity: `0x0000000000000000000000000000000000000818`
 
 ## Prerequisites
 
