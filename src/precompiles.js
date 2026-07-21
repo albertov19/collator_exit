@@ -128,6 +128,17 @@ export const stakingAbi = [
     inputs: [{ name: 'candidate', type: 'address' }],
     outputs: [{ name: '', type: 'bool' }],
   },
+  {
+    // True once scheduleLeaveCandidates has been called and the exit has not been
+    // executed or cancelled yet. Note `isCandidate` stays true throughout — the
+    // candidate metadata survives until executeLeaveCandidates runs — so this is
+    // the only EVM-side way to tell that a leave is already pending.
+    type: 'function',
+    name: 'candidateExitIsPending',
+    stateMutability: 'view',
+    inputs: [{ name: 'candidate', type: 'address' }],
+    outputs: [{ name: '', type: 'bool' }],
+  },
 ];
 
 // --- Author Mapping precompile (0x...0807) ---

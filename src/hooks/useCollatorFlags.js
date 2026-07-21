@@ -3,12 +3,18 @@ import { isAddress, zeroHash } from 'viem';
 import { PRECOMPILES, stakingAbi, authorMappingAbi } from '../precompiles.js';
 
 /**
- * Reads the two flags used to gate the offboarding steps:
+ * Reads the flags used to gate the offboarding steps:
  *   - isCandidate      → gates "schedule leave" (step 1)
+ *   - exitPending      → gates "schedule leave" (step 1) once a leave is scheduled
  *   - hasAuthorKeys    → gates "remove keys"    (step 3)
  *
+ * All are read over the EVM precompiles, so the gates keep working even when the
+ * Substrate (WSS) round subscription is unavailable — `exitPending` in particular
+ * is the EVM-side truth for "a leave is already scheduled", since `isCandidate`
+ * stays true for a leaving candidate.
+ *
  * Values are `undefined` while loading or if the read fails, so callers should
- * only block when a flag is explicitly `false` (never block on unknown).
+ * only block when a flag is explicitly `false`/`true` (never block on unknown).
  */
 export function useCollatorFlags(account) {
   const valid = isAddress(account);
@@ -18,6 +24,7 @@ export function useCollatorFlags(account) {
       ? [
           { address: PRECOMPILES.staking, abi: stakingAbi, functionName: 'isCandidate', args: [account] },
           { address: PRECOMPILES.authorMapping, abi: authorMappingAbi, functionName: 'nimbusIdOf', args: [account] },
+          { address: PRECOMPILES.staking, abi: stakingAbi, functionName: 'candidateExitIsPending', args: [account] },
         ]
       : [],
     query: { enabled: valid, refetchInterval: 20_000 },
@@ -25,7 +32,8 @@ export function useCollatorFlags(account) {
 
   const isCandidate = data?.[0]?.status === 'success' ? data[0].result : undefined;
   const nimbusId = data?.[1]?.status === 'success' ? data[1].result : undefined;
+  const exitPending = data?.[2]?.status === 'success' ? data[2].result : undefined;
   const hasAuthorKeys = nimbusId === undefined ? undefined : nimbusId !== zeroHash;
 
-  return { isCandidate, hasAuthorKeys };
+  return { isCandidate, hasAuthorKeys, exitPending };
 }

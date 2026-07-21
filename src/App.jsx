@@ -182,13 +182,20 @@ export default function App() {
     : null;
   const gated = !!gateReason;
 
+  // "A leave is already scheduled" — from either source, whichever answers first.
+  // The precompile flag is the reliable one: it's an EVM read that works even if
+  // the Substrate (WSS) subscription is still loading or failed, which otherwise
+  // left step 1 enabled for an already-leaving candidate.
+  const leaveScheduled = flags.exitPending === true || (exit.status === 'done' && exit.isLeaving);
+
   // Step 1 (schedule leave): only for an active candidate that isn't already leaving.
+  // Checked before isCandidate because isCandidate stays true while leaving.
   const scheduleReason =
     gateReason ||
-    (flags.isCandidate === false
-      ? 'This account is not a candidate — nothing to leave.'
-      : exit.status === 'done' && exit.isLeaving
+    (leaveScheduled
       ? 'A leave is already scheduled — proceed to “Execute leave”.'
+      : flags.isCandidate === false
+      ? 'This account is not a candidate — nothing to leave.'
       : null);
 
   // Step 3 (remove keys): only meaningful if author-mapping keys are set.
@@ -198,7 +205,10 @@ export default function App() {
   // Step 2 (execute leave): the scheduled exit must have reached its round.
   let executeReason = gateReason;
   if (!gated) {
-    if (exit.status === 'loading') executeReason = 'Checking round status…';
+    // Precompile fallback while the round subscription hasn't answered yet.
+    if (exit.status !== 'done' && flags.exitPending === false)
+      executeReason = 'No leave scheduled yet — run “Schedule leave” first.';
+    else if (exit.status === 'loading') executeReason = 'Checking round status…';
     else if (exit.status === 'done' && !exit.exists) executeReason = 'This account is not an active candidate.';
     else if (exit.status === 'done' && exit.exists && !exit.isLeaving)
       executeReason = 'No leave scheduled yet — run “Schedule leave” first.';
